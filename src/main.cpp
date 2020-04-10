@@ -1,3 +1,7 @@
+/**
+  Created by Fergus Baker; April 2020.
+  */
+
 #include "Arduino.h"
 #include "Servo.h"
 #include <math.h>
