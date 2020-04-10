@@ -4,7 +4,6 @@
 
 #include "Arduino.h"
 #include "Servo.h"
-#include <math.h>
 
 /*
  *  
@@ -16,27 +15,48 @@
  */
 
 #define ARRAY_SIZE(x) ((sizeof x) / (sizeof *x))
+using byte = unsigned char;
 
 // PIN SETUP
-const int led_pins[]    = { 11 , 10 , 9 };
-const int servo_pins[]  = { 6  , 5  , 3 };
+const int led_pins[]    = { 3 , 5 , 6 , 9 , 10 , 11 };
+const int servo_pins[]  = { };
 
 // SERVO ANGLE SETUP
 #define MAX_POS 180
 #define MIN_POS 80
 
 // CONSTANTS
-#define SERV_SIZE ARRAY_SIZE(servo_pins)
-#define LEDS_SIZE ARRAY_SIZE(led_pins)
+#define SERV_SIZE 0
+#define LEDS_SIZE 6
 
 // SERVO CONFIG
 int pos[SERV_SIZE];
 bool reverse[SERV_SIZE];
-byte speeds[SERV_SIZE];
+byte* speeds;
 Servo servos[SERV_SIZE];
 
 // LED CONFIG
-byte brightness[LEDS_SIZE];
+byte* brightness;
+
+// SERVO SPEED DATA
+// ln((i**2)/200
+const byte SPEEDS[256] = {
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3,
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4,
+      4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+      4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+      4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5,
+      5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+      5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+      5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+      5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5
+};
+
+// OTHER GLOBALS
+bool newData = false;
 
 // DECLARATIONS --------------------------------------------- //
 
@@ -45,7 +65,7 @@ void flush_buffer();
 void adjust_pos(int i);
 void step_servo();
 void read_data(byte* ptr);
-void write_data(byte* ptr, int length);
+void write_data();
 void fade_leds();
 
 // ENTRY POINTS --------------------------------------------- //
@@ -69,8 +89,7 @@ void setup() {
 }
 
 void loop() {
-  step_servo();
-  fade_leds();
+  // step_servo();
 }
 
 // CALLBACKS ------------------------------------------------ //
@@ -83,15 +102,15 @@ void serialEvent() {
 
   byte data[SERV_SIZE + LEDS_SIZE];
   read_data(data);
-  for (int i = 0; i < LEDS_SIZE; i++) {
-    brightness[i] = data[i];
-  }
-  for (int i = 0; i < SERV_SIZE; i++) {
-    speeds[i] = (log((float) data[i + LEDS_SIZE]));
-  }
-  write_data(brightness, LEDS_SIZE);
-  write_data(speeds, SERV_SIZE);
+
+  brightness = data;
+  speeds = data + ( LEDS_SIZE * sizeof(byte) );
+
+  write_data();
   flush_buffer();
+  
+  // update LEDs
+  fade_leds();
 }
 
 // DEFINITIONS ---------------------------------------------- //
@@ -99,7 +118,7 @@ void serialEvent() {
 void flush_buffer()
 {
   while (Serial.read() != '\r')
-   ; // do nothing
+   loop(); // do nothing
 }
 
 void fade_leds() {
@@ -111,9 +130,9 @@ void fade_leds() {
 void adjust_pos(int i) {
   // change positions
   if (reverse[i]) {
-    pos[i] -= speeds[i];
+    pos[i] -= SPEEDS[speeds[i]];
   } else {
-    pos[i] += speeds[i];
+    pos[i] += SPEEDS[speeds[i]];
   }
   // check bounds
   if (pos[i] <= MIN_POS) {
@@ -137,20 +156,26 @@ void step_servo() {
 
 void read_data(byte* ptr) {
   while (Serial.available() < SERV_SIZE + LEDS_SIZE) {
-    ; // wait until 8 bytes available
+    loop(); // wait until 6 bytes available
   }
   for (int i = 0; i < SERV_SIZE + LEDS_SIZE; i++) {
     ptr[i] = (byte)(Serial.read());
   }
 }
 
-void write_data(byte* ptr, int length) {
-  for (int i = 0; i < length; i++) {
-    Serial.write((int)(ptr[i]));
+void write_data() {
+  for (int i = 0; i < LEDS_SIZE; i++) {
+    Serial.write((byte) brightness[i]);
+  }
+  for (int i = 0; i < SERV_SIZE; i++) {
+    Serial.write((byte) speeds[i]);
   }
 }
 
 void init_arrays() {
+  brightness = (byte*) malloc(LEDS_SIZE);
+  speeds = (byte*) malloc(SERV_SIZE);
+
   for (int i = 0; i < SERV_SIZE; i++) {
     // set speeds and positions to 0
     speeds[i] = 0;
@@ -159,6 +184,6 @@ void init_arrays() {
   }
   for (int i = 0; i < LEDS_SIZE; i++) {
     // set led brightnesses to 0
-    brightness[i]   = 0;
+    brightness[i] = 0;
   }
 }
